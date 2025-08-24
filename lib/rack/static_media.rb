@@ -3,7 +3,7 @@ require 'rack/utils'
 require 'rack/mime'
 require 'mime/types'
 require 'digest'
-require './lib/rack/static_media/version'
+require 'openssl'
 
 module Rack
   class StaticMedia
@@ -83,9 +83,12 @@ module Rack
       if @etag_enabled
         et = weak_etag(stat)
         headers['ETag'] = et
-        # 304 if If-None-Match matches
         inm = req.get_header('HTTP_IF_NONE_MATCH')
-        return [304, headers, []] if inm && Rack::Utils.secure_compare(inm, et)
+        if inm
+          # handle comma-separated ETags
+          client_etags = inm.split(',').map(&:strip)
+          return [304, headers, []] if client_etags.any? { |v| Rack::Utils.secure_compare(v, et) }
+        end
       end
       if @lm_enabled
         headers['Last-Modified'] = stat.mtime.httpdate
@@ -125,35 +128,39 @@ module Rack
     private
 
     def mount_hit?(path)
-      return false unless path.start_with?(@mount)
-      # allow exact mount (serves index) or below
-      path == @mount.chomp('/') || true
+      # Allow exact mount (e.g. /media -> /media/index.html) or any path under /media/
+      path == @mount.chomp('/') || path.start_with?(@mount)
     end
 
     def allowed_extension?(ext, path)
       return true if @allowed_ext.include?(ext)
+
       # allow html if explicitly indexed
       @index_files.any? { |ix| path.end_with?("/#{ix}") }
     end
 
     def mime_for(ext)
-      types = MIME::Types.type_for(ext)
+      # ext like ".png" -> "png"
+      key = ext.to_s.sub(/\A\./, '')
+      types = MIME::Types.type_for(key)
       types.first&.to_s
     end
 
     def stream_file(path, offset: 0, length: nil, head: false)
       return [] if head
+
       io = File.open(path, 'rb')
-      io.seek(offset) if offset && offset > 0
+      io.seek(offset) if offset && offset.positive?
       if length
         ::Rack::BodyProxy.new(io) do |f|
           # nothing — BodyProxy will close it
         end.tap do |proxy|
           def proxy.each
             remaining = @length
-            while remaining > 0
+            while remaining.positive?
               chunk = @io.read([8192, remaining].min)
               break unless chunk
+
               remaining -= chunk.bytesize
               yield chunk
             end
@@ -167,7 +174,7 @@ module Rack
     end
 
     def weak_etag(stat)
-      %W[W/ "#{stat.size}-#{stat.mtime.to_i}"].join
+      %Q{W/"#{stat.size}-#{stat.mtime.to_i}"}
     end
 
     def bad_request(msg)    = [400, {'Content-Type' => 'text/plain'}, [msg]]
@@ -187,6 +194,7 @@ module Rack
         cand_d = candidate.downcase
       end
       return nil unless cand_d.start_with?(root_d)
+
       candidate
     end
 
@@ -200,6 +208,7 @@ module Rack
       exp = req.params['exp']
       return false unless sig && exp&.match?(/\A\d+\z/)
       return false if Time.now.to_i > exp.to_i
+
       data = "#{path}#{exp}"
       expected = OpenSSL::HMAC.hexdigest('SHA256', @secret, data)
       Rack::Utils.secure_compare(expected, sig)
