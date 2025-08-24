@@ -1,0 +1,1 @@
+require "rack/static_media"

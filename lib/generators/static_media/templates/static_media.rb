@@ -1,0 +1,8 @@
+Rails.application.config.middleware.use Rack::StaticMedia,
+  root: ENV.fetch("MEDIA_ROOT", Rails.root.join("storage", "media")),
+  mount: "/media",
+  allowed_ext: %w[.png .jpg .jpeg .webp .gif .mp4 .webm .pdf],
+  cache_control: "public, max-age=31536000, immutable",
+  etag: true,
+  last_modified: true
+  # signing_secret: ENV["MEDIA_SIGNING_SECRET"] # uncomment if you want signed URLs
