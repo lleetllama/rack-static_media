@@ -4,6 +4,7 @@ require 'rack/mime'
 require 'mime/types'
 require 'digest'
 require 'openssl'
+require 'rack/body_proxy'
 
 module Rack
   class StaticMedia
@@ -121,9 +122,12 @@ module Rack
       body = stream_file(path, head: req.head?)
       [200, headers, body]
     rescue => e
-      # don’t leak internal paths/errors
+      if ENV['STATIC_MEDIA_DEBUG'] == '1'
+        warn "[StaticMedia] #{e.class}: #{e.message}\n#{e.backtrace&.join("\n")}"
+      end
       [500, {'Content-Type' => 'text/plain'}, ["StaticMedia error\n"]]
     end
+
 
     private
 
@@ -149,28 +153,26 @@ module Rack
     def stream_file(path, offset: 0, length: nil, head: false)
       return [] if head
 
-      io = File.open(path, 'rb')
-      io.seek(offset) if offset && offset.positive?
-      if length
-        ::Rack::BodyProxy.new(io) do |f|
-          # nothing — BodyProxy will close it
-        end.tap do |proxy|
-          def proxy.each
-            remaining = @length
-            while remaining.positive?
-              chunk = @io.read([8192, remaining].min)
-              break unless chunk
+      file = File.open(path, 'rb')
+      file.seek(offset.to_i) if offset && offset.to_i > 0
 
-              remaining -= chunk.bytesize
-              yield chunk
-            end
+      enum = Enumerator.new do |y|
+        if length
+          remaining = length.to_i
+          while remaining > 0
+            chunk = file.read([8192, remaining].min)
+            break unless chunk
+            remaining -= chunk.bytesize
+            y << chunk
           end
-          proxy.instance_variable_set(:@io, io)
-          proxy.instance_variable_set(:@length, length)
+        else
+          while (chunk = file.read(8192))
+            y << chunk
+          end
         end
-      else
-        ::Rack::File::Iterator.new(io)
       end
+
+      ::Rack::BodyProxy.new(enum) { file.close }
     end
 
     def weak_etag(stat)
