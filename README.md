@@ -41,10 +41,15 @@ end
 The above serves files from `/var/www/uploads` under the `/media` URL path.
 
 ### Rails
-For Rails applications, create an initializer and mount the middleware:
+Use the installer to generate a ready-to-use initializer:
+
+```bash
+bin/rails generate static_media:install --mount=/media
+```
+
+This creates `config/initializers/static_media.rb` with sensible defaults, which you can customize as needed. The generated file mounts the middleware like so:
 
 ```ruby
-# config/initializers/static_media.rb.tt
 Rails.application.config.middleware.use(
   Rack::StaticMedia,
   root: Rails.root.join('storage'),
@@ -64,6 +69,15 @@ Rails.application.config.middleware.use(
 | `signing_secret` | `nil` | Enable HMAC signing of URLs. Requires `sig` and `exp` params. |
 | `allow_list` / `deny_list` | `nil` | Arrays of strings or regexes to explicitly allow/deny paths. |
 | `index_filenames` | `["index.html"]` | Filenames to serve when directory is requested. |
+
+## Environment Variables
+The middleware recognizes a few optional environment variables:
+
+| Variable | Description |
+| -------- | ----------- |
+| `MEDIA_ROOT` | Override the filesystem directory used for media files. |
+| `MEDIA_SIGNING_SECRET` | Enable HMAC URL signing by providing a secret. |
+| `STATIC_MEDIA_DEBUG` | Set to `1` to log stack traces when errors occur. |
 
 ## URL Signing
 When `signing_secret` is provided, requests must include `?sig=<hexdigest>&exp=<unix_ts>`. Signatures are calculated using:
