@@ -1,6 +1,7 @@
+# lib/generators/static_media/install/templates/static_media.rb.tt
 Rails.application.config.middleware.use Rack::StaticMedia,
   root: ENV.fetch("MEDIA_ROOT", Rails.root.join("storage", "media")),
-  mount: "/media",
+  mount: "<%= mount %>",
   allowed_ext: %w[.png .jpg .jpeg .webp .gif .mp4 .webm .pdf],
   cache_control: "public, max-age=31536000, immutable",
   etag: true,

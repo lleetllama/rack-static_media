@@ -44,7 +44,7 @@ The above serves files from `/var/www/uploads` under the `/media` URL path.
 For Rails applications, create an initializer and mount the middleware:
 
 ```ruby
-# config/initializers/static_media.rb
+# config/initializers/static_media.rb.tt
 Rails.application.config.middleware.use(
   Rack::StaticMedia,
   root: Rails.root.join('storage'),

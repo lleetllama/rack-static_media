@@ -1,9 +1,12 @@
-require "rails/railtie"
+# lib/rack/static_media/railtie.rb
+require 'rails/railtie'
 
 module Rack
   class StaticMedia
     class Railtie < ::Rails::Railtie
-      # no-op by default; you’ll add a Rails initializer in the host app
+      generators do
+        require 'generators/static_media/install/install_generator'
+      end
     end
   end
 end
