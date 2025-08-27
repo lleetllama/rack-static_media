@@ -122,10 +122,15 @@ module Rack
       body = stream_file(path, head: req.head?)
       [200, headers, body]
     rescue => e
-      if ENV['STATIC_MEDIA_DEBUG'] == '1'
-        warn "[StaticMedia] #{e.class}: #{e.message}\n#{e.backtrace&.join("\n")}"
+      warn "[StaticMedia] #{e.class}: #{e.message}\n#{e.backtrace&.join("\n")}" if ENV['STATIC_MEDIA_DEBUG'] == '1'
+
+      if defined?(Rails) && !Rails.env.production?
+        # In development/test, re-raise so the Rails error page renders
+        raise
+      else
+        # In production, keep it terse
+        [500, {'Content-Type' => 'text/plain'}, ["StaticMedia error\n"]]
       end
-      [500, {'Content-Type' => 'text/plain'}, ["StaticMedia error\n"]]
     end
 
 
