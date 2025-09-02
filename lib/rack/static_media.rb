@@ -39,58 +39,66 @@ module Rack
       rel = req.path_info.sub(@mount, '')
       rel = '' if rel == '/'
 
-      # decode once; reject bad encodings
       begin
         rel = ::Rack::Utils.unescape_path(rel)
       rescue ArgumentError
-        return bad_request('Bad path encoding')
+        # CHANGED: fall through so Rails can render its error page
+        return @app.call(env)
       end
 
-      # normalize + forbid traversal
-      return bad_request('NUL in path') if rel.include?("\u0000")
+      return @app.call(env) if rel.include?("\u0000") # CHANGED: fall through on bad path
 
       path = safe_join(@root, rel)
-      return forbidden unless path
+      return @app.call(env) unless path # CHANGED: traversal => fall through
 
       # if directory, try index files
       if File.directory?(path)
         path = @index_files.map { |ix| File.join(path, ix) }.find { |p| File.file?(p) }
-        return not_found unless path
+        return @app.call(env) unless path # CHANGED: no index => fall through
       end
 
-      return not_found unless File.file?(path)
+      return @app.call(env) unless File.file?(path) # CHANGED: miss => fall through
 
       # extension whitelist
       ext = File.extname(path).downcase
-      return forbidden unless allowed_extension?(ext, path)
-
-      # allow/deny lists (regexes or strings)
-      return forbidden if @deny_list&.any? { |pat| match_pat?(pat, path) }
-      if @allow_list && !@allow_list.any? { |pat| match_pat?(pat, path) }
-        return forbidden
+      unless allowed_extension?(ext, path)
+        return @app.call(env) # CHANGED: let Rails handle weird extensions
       end
 
-      # optional signature check (?sig=..., ?exp=...)
+      # allow/deny lists
+      if @deny_list&.any? { |pat| match_pat?(pat, path) }
+        return @app.call(env) # CHANGED
+      end
+      if @allow_list && !@allow_list.any? { |pat| match_pat?(pat, path) }
+        return @app.call(env) # CHANGED
+      end
+
+      # optional signature check (?sig, ?exp)
       if @secret
-        return unauthorized unless valid_signature?(req, path)
+        return [401, {'Content-Type' => 'text/plain', 'X-Static-Media' => 'sig-fail'}, ['Unauthorized']] unless valid_signature?(req, path)
       end
 
       # HEAD/GET only
-      return method_not_allowed unless %w[GET HEAD].include?(req.request_method)
+      return @app.call(env) unless %w[GET HEAD].include?(req.request_method) # CHANGED
 
-      # caching headers
-      headers = { 'Cache-Control' => @cache_control }
-      stat    = File.stat(path)
+      headers = {
+        'Cache-Control' => @cache_control,
+        'X-Static-Media' => 'hit',
+        'Accept-Ranges' => 'bytes'
+      }
+
+      stat = File.stat(path)
+
       if @etag_enabled
         et = weak_etag(stat)
         headers['ETag'] = et
         inm = req.get_header('HTTP_IF_NONE_MATCH')
         if inm
-          # handle comma-separated ETags
           client_etags = inm.split(',').map(&:strip)
           return [304, headers, []] if client_etags.any? { |v| Rack::Utils.secure_compare(v, et) }
         end
       end
+
       if @lm_enabled
         headers['Last-Modified'] = stat.mtime.httpdate
         ims = req.get_header('HTTP_IF_MODIFIED_SINCE')
@@ -117,21 +125,24 @@ module Rack
         end
       end
 
-      # full file
       headers['Content-Length'] = stat.size.to_s
       body = stream_file(path, head: req.head?)
       [200, headers, body]
+
     rescue => e
       warn "[StaticMedia] #{e.class}: #{e.message}\n#{e.backtrace&.join("\n")}" if ENV['STATIC_MEDIA_DEBUG'] == '1'
 
-      if defined?(Rails) && !Rails.env.production?
-        # In development/test, re-raise so the Rails error page renders
-        raise
+      # CHANGED: prefer re-raise in any non-production Rack env, even if Rails isn't loaded yet
+      rack_env = (ENV['RACK_ENV'] || 'development').to_s
+      rails_nonprod = defined?(Rails) && !Rails.env.production?
+
+      if rails_nonprod || rack_env != 'production'
+        raise e
       else
-        # In production, keep it terse
-        [500, {'Content-Type' => 'text/plain'}, ["StaticMedia error\n"]]
+        [500, {'Content-Type' => 'text/plain', 'X-Static-Media' => 'error'}, ["StaticMedia error\n"]]
       end
     end
+
 
 
     private
@@ -143,9 +154,7 @@ module Rack
 
     def allowed_extension?(ext, path)
       return true if @allowed_ext.include?(ext)
-
-      # allow html if explicitly indexed
-      @index_files.any? { |ix| path.end_with?("/#{ix}") }
+      @index_files.any? { |ix| path.end_with?("/#{ix}") } # allow explicit index html
     end
 
     def mime_for(ext)
@@ -157,10 +166,8 @@ module Rack
 
     def stream_file(path, offset: 0, length: nil, head: false)
       return [] if head
-
       file = File.open(path, 'rb')
       file.seek(offset.to_i) if offset && offset.to_i > 0
-
       enum = Enumerator.new do |y|
         if length
           remaining = length.to_i
@@ -176,7 +183,6 @@ module Rack
           end
         end
       end
-
       ::Rack::BodyProxy.new(enum) { file.close }
     end
 
